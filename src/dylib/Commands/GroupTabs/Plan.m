@@ -21,7 +21,9 @@ NSString *DPDomainKey(NSString *urlString) {
     return host.length ? host : nil;
 }
 
-// Loose tabs join an existing group whose title is exactly the domain. Tabs in any other group stay put.
+// Loose tabs join an existing group titled with the domain, or with the name a new group would get. Any other group
+// stays put. A new group is titled with that name (YouTube); the domain (youtube.com) stays the key. A group already
+// titled with the domain still receives the tabs.
 NSArray<NSDictionary *> *DPOps(NSArray<NSDictionary *> *tabs, NSArray *groups) {
     NSMutableDictionary<NSNumber *, NSString *> *groupTitle = [NSMutableDictionary dictionary];
     NSMutableDictionary<NSString *, NSString *> *homeID = [NSMutableDictionary dictionary];
@@ -47,12 +49,17 @@ NSArray<NSDictionary *> *DPOps(NSArray<NSDictionary *> *tabs, NSArray *groups) {
             }
         }
     }
+    NSMutableSet<NSString *> *domains = [NSMutableSet set];
+    for (NSDictionary *tab in tabs) if ([tab[@"domain"] length]) [domains addObject:tab[@"domain"]];
+    NSDictionary<NSString *, NSString *> *display = DPGroupTitles(domains.allObjects);
     NSMutableDictionary<NSString *, NSMutableArray<NSDictionary *> *> *pools = [NSMutableDictionary dictionary];
     for (NSDictionary *tab in tabs) {
         NSNumber *sid = tab[@"session"];
         NSString *domain = tab[@"domain"];
+        if (![domain length]) continue;
         NSString *title = groupTitle[sid];
-        if (title && ![title isEqualToString:domain]) continue;
+        NSString *name = display[domain] ?: domain;
+        if (title && ![title isEqualToString:domain] && ![title isEqualToString:name]) continue;
         NSMutableArray *pool = pools[domain] ?: (pools[domain] = [NSMutableArray array]);
         [pool addObject:tab];
     }
@@ -60,11 +67,17 @@ NSArray<NSDictionary *> *DPOps(NSArray<NSDictionary *> *tabs, NSArray *groups) {
     for (NSString *domain in pools) {
         NSArray<NSDictionary *> *pool = pools[domain];
         if (pool.count < 2) continue;
+        NSString *name = display[domain] ?: domain;
+        // Prefer a group Dia already titled with the host, so older groups keep collecting tabs.
+        NSString *home = homeID[domain] ? domain : (homeID[name] ? name : nil);
+        NSMutableSet<NSNumber *> *stay = [NSMutableSet set];
+        if (homeMembers[domain]) [stay unionSet:homeMembers[domain]];
+        if (![name isEqualToString:domain] && homeMembers[name]) [stay unionSet:homeMembers[name]];
         NSMutableArray<NSNumber *> *ids = [NSMutableArray array];
-        for (NSDictionary *tab in pool) if (![homeMembers[domain] containsObject:tab[@"session"]]) [ids addObject:tab[@"session"]];
+        for (NSDictionary *tab in pool) if (![stay containsObject:tab[@"session"]]) [ids addObject:tab[@"session"]];
         if (!ids.count) continue;
-        if (homeID[domain]) [ops addObject:@{@"op": @"add", @"group": homeID[domain], @"ids": ids}];
-        else if (ids.count >= 2) [ops addObject:@{@"op": @"create", @"title": domain, @"ids": ids}];
+        if (home) [ops addObject:@{@"op": @"add", @"group": homeID[home], @"ids": ids}];
+        else if (ids.count >= 2) [ops addObject:@{@"op": @"create", @"title": name, @"ids": ids}];
     }
     return ops;
 }
