@@ -18,6 +18,7 @@ NSString *DPText(id value);
 
 // Plan.m: which groups to create and which tabs to add to existing ones.
 NSString *DPDomainKey(NSString *urlString);
+NSString *DPGroupTitle(NSString *domain);  // Title.m. Shown on a new group; the host stays the grouping key.
 NSArray<NSDictionary *> *DPOps(NSArray<NSDictionary *> *tabs, NSArray *groups);
 
 // Order.m: where tabs sit, so undo can put them back.
