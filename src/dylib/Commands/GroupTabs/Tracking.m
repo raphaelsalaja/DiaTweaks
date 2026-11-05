@@ -60,6 +60,10 @@ static void DPBrowser_takeOwnership(id self, SEL _cmd, id contents) {
     DPRemember(contents, nil, self, [DPDelegateByBrowser objectForKey:self]);
 }
 
+NSWindow *DPBrowserWindow(id browser) {
+    return browser ? [DPWindowByBrowser objectForKey:browser] : nil;
+}
+
 id DPCommandBrowser(void) {
     NSMutableArray *ready = [NSMutableArray new];
     for (id browser in DPBrowsers.allObjects)

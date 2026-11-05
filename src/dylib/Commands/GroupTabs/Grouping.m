@@ -78,8 +78,8 @@ void DPRunOps(id delegate, id browser, NSArray<NSDictionary *> *ops, NSUInteger 
     }
 }
 
-void DPGroupTabsOnce(void) {
-    id browser = DPCommandBrowser();
+// only: session IDs to consider, or nil for every tab in the window. Pinned tabs and internal pages are still left out.
+static void DPGroupBrowser(id browser, NSSet<NSNumber *> *only) {
     if (!browser) return;
     id delegate = DPGroupingDelegate(browser);
     if (![delegate respondsToSelector:@selector(browser:getAllTabGroupsWithCompletion:)]) return;
@@ -91,7 +91,7 @@ void DPGroupTabsOnce(void) {
         long long sid = DPSessionOf(contents);
         NSString *url = DPText(DPMsg(contents, @selector(url)));
         NSString *domain = DPDomainKey(url);
-        if (sid <= 0 || !domain || DPPinned(sid, url, pinnedSessions, pinnedURLs, openURLs)) continue;
+        if (sid <= 0 || !domain || (only && ![only containsObject:@(sid)]) || DPPinned(sid, url, pinnedSessions, pinnedURLs, openURLs)) continue;
         [tabs addObject:@{@"session": @(sid), @"domain": domain, @"url": url}];
     }
     void (*ask)(id, SEL, id, void (^)(NSArray *)) = (void *)objc_msgSend;
@@ -108,4 +108,13 @@ void DPGroupTabsOnce(void) {
             DPRunOps(delegate, browser, ops, 0, ^{ DPOfferUndo(delegate, browser, ids, places); });
         });
     });
+}
+
+void DPGroupTabsOnce(void) { DPGroupBrowser(DPCommandBrowser(), nil); }
+
+void DPGroupSelectedTabsOnce(void) {
+    id browser = DPCommandBrowser();
+    NSSet<NSNumber *> *only = browser ? DPSelectedSessions(browser) : nil;
+    if (only.count < 2) return;
+    DPGroupBrowser(browser, only);
 }

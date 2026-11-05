@@ -1,7 +1,9 @@
 #import "GroupTabs.h"
 
 static const NSInteger DPGroupMenuTag = 0xD1A7001;
+static const NSInteger DPGroupSelectedMenuTag = 0xD1A7002;
 static NSString *const DPGroupMenuTitle = @"Group Tabs by Domain";
+static NSString *const DPGroupSelectedMenuTitle = @"Group Selected Tabs by Domain";
 static BOOL DPInserting;
 
 static BOOL DPIsNewGroupTitle(NSString *title) {
@@ -11,46 +13,49 @@ static BOOL DPIsNewGroupTitle(NSString *title) {
 
 extern DPPatch DPGroupTabs;
 
-static NSMenuItem *DPGroupMenuItem(void) {
-    NSMenuItem *item = DPMenuItem(DPGroupMenuTitle, ^{ DPGroupTabsOnce(); });
-    item.tag = DPGroupMenuTag;
+static BOOL DPIsGroupTag(NSInteger tag) { return tag == DPGroupMenuTag || tag == DPGroupSelectedMenuTag; }
+
+static NSMenuItem *DPGroupMenuItem(NSString *title, NSInteger tag, void (^action)(void)) {
+    NSMenuItem *item = DPMenuItem(title, action);
+    item.tag = tag;
     item.image = [NSImage imageWithSystemSymbolName:@"rectangle.3.group" accessibilityDescription:nil];
     item.hidden = !DPGroupTabs.on;
     return item;
 }
 
+static NSMenuItem *DPFullItem(void) { return DPGroupMenuItem(DPGroupMenuTitle, DPGroupMenuTag, ^{ DPGroupTabsOnce(); }); }
+
+static NSMenuItem *DPSelectedItem(void) {
+    return DPGroupMenuItem(DPGroupSelectedMenuTitle, DPGroupSelectedMenuTag, ^{ DPGroupSelectedTabsOnce(); });
+}
+
 static void DPPlaceGroupItem(NSMenu *menu) {
     if (DPInserting || !menu) return;
-    NSInteger anchor = NSNotFound, visible = NSNotFound, existing = NSNotFound;
+    NSInteger anchor = NSNotFound, visible = NSNotFound;
     for (NSInteger i = 0; i < menu.numberOfItems; i++) {
         NSMenuItem *item = [menu itemAtIndex:i];
-        if (item.tag == DPGroupMenuTag) existing = i;
-        else if (DPIsNewGroupTitle(item.title)) {
-            if (!item.hidden && visible == NSNotFound) visible = i;
-            if (anchor == NSNotFound) anchor = i;
-        }
+        if (!DPIsNewGroupTitle(item.title)) continue;
+        if (!item.hidden && visible == NSNotFound) visible = i;
+        if (anchor == NSNotFound) anchor = i;
     }
     if (visible != NSNotFound) anchor = visible;
     if (anchor == NSNotFound) return;
-    DPInserting = YES;
-    for (NSInteger i = menu.numberOfItems - 1; i >= 0; i--)
-        if ([menu itemAtIndex:i].tag == DPGroupMenuTag && i != existing) {
-            [menu removeItemAtIndex:i];
-            if (i < existing) existing--;
-            if (i < anchor) anchor--;
-        }
-    DPInserting = NO;
     NSInteger end = menu.numberOfItems;
     for (NSInteger i = anchor + 1; i < menu.numberOfItems; i++)
         if ([menu itemAtIndex:i].isSeparatorItem) { end = i; break; }
-    if (existing == end - 1) return;
+    if (end >= 2 && [menu itemAtIndex:end - 2].tag == DPGroupMenuTag && [menu itemAtIndex:end - 1].tag == DPGroupSelectedMenuTag) return;
     DPInserting = YES;
-    NSMenuItem *item = existing != NSNotFound ? [menu itemAtIndex:existing] : DPGroupMenuItem();
-    if (existing != NSNotFound) {
-        [menu removeItemAtIndex:existing];
-        if (existing < end) end--;
+    NSMenuItem *full = nil, *selected = nil;
+    for (NSInteger i = menu.numberOfItems - 1; i >= 0; i--) {
+        NSMenuItem *item = [menu itemAtIndex:i];
+        if (!DPIsGroupTag(item.tag)) continue;
+        if (item.tag == DPGroupMenuTag && !full) full = item;
+        if (item.tag == DPGroupSelectedMenuTag && !selected) selected = item;
+        [menu removeItemAtIndex:i];
+        if (i < end) end--;
     }
-    [menu insertItem:item atIndex:end];
+    [menu insertItem:full ?: DPFullItem() atIndex:MIN(end, menu.numberOfItems)];
+    [menu insertItem:selected ?: DPSelectedItem() atIndex:MIN(end + 1, menu.numberOfItems)];
     DPInserting = NO;
 }
 
@@ -67,7 +72,7 @@ static void DPInstallMenuBarItem(void) {
                 commandMenu = top.submenu;
     }
     NSMenu *menu = tabMenu ?: commandMenu ?: windowMenu ?: fileMenu;
-    if (!menu || [menu itemWithTag:DPGroupMenuTag]) return;
+    if (!menu || ([menu itemWithTag:DPGroupMenuTag] && [menu itemWithTag:DPGroupSelectedMenuTag])) return;
     for (NSMenuItem *item in menu.itemArray)
         if (DPIsNewGroupTitle(item.title)) return DPPlaceGroupItem(menu);
     NSInteger index = menu.numberOfItems;
@@ -76,18 +81,24 @@ static void DPInstallMenuBarItem(void) {
         if (DPIsNewGroupTitle(title) || [title isEqualToString:@"New Tab"]) index = i + 1;
     }
     DPInserting = YES;
-    [menu insertItem:DPGroupMenuItem() atIndex:MIN(index, menu.numberOfItems)];
+    for (NSInteger i = menu.numberOfItems - 1; i >= 0; i--)
+        if (DPIsGroupTag([menu itemAtIndex:i].tag)) {
+            [menu removeItemAtIndex:i];
+            if (i < index) index--;
+        }
+    [menu insertItem:DPFullItem() atIndex:MIN(index, menu.numberOfItems)];
+    [menu insertItem:DPSelectedItem() atIndex:MIN(index + 1, menu.numberOfItems)];
     DPInserting = NO;
 }
 
 static void DPMenu_addItem(NSMenu *self, SEL _cmd, NSMenuItem *item) {
     DPCallOriginal(DPMenu_addItem, self, item);
-    if (!DPInserting && (DPIsNewGroupTitle(item.title) || [self itemWithTag:DPGroupMenuTag])) DPPlaceGroupItem(self);
+    if (!DPInserting && (DPIsNewGroupTitle(item.title) || DPIsGroupTag(item.tag) || [self itemWithTag:DPGroupMenuTag])) DPPlaceGroupItem(self);
 }
 
 static void DPMenu_insertItem(NSMenu *self, SEL _cmd, NSMenuItem *item, NSInteger index) {
     DPCallOriginal(DPMenu_insertItem, self, item, index);
-    if (!DPInserting && (DPIsNewGroupTitle(item.title) || [self itemWithTag:DPGroupMenuTag])) DPPlaceGroupItem(self);
+    if (!DPInserting && (DPIsNewGroupTitle(item.title) || DPIsGroupTag(item.tag) || [self itemWithTag:DPGroupMenuTag])) DPPlaceGroupItem(self);
 }
 
 void DPInstallGroupMenus(void) {
@@ -98,7 +109,10 @@ void DPInstallGroupMenus(void) {
 
 // Tab context menus are built each time they open, so only the Tabs menu keeps an item to hide.
 static void DPApplyGroupTabs(DPPatch *patch) {
-    for (NSMenuItem *top in NSApp.mainMenu.itemArray) [top.submenu itemWithTag:DPGroupMenuTag].hidden = !patch->on;
+    for (NSMenuItem *top in NSApp.mainMenu.itemArray) {
+        [top.submenu itemWithTag:DPGroupMenuTag].hidden = !patch->on;
+        [top.submenu itemWithTag:DPGroupSelectedMenuTag].hidden = !patch->on;
+    }
 }
 
 DP_PATCH(DPGroupTabs) {
@@ -106,7 +120,7 @@ DP_PATCH(DPGroupTabs) {
     .order = 86,
     .defaultOn = YES,
     .title = @"Group Tabs by Domain",
-    .detail = @"Adds Group Tabs by Domain to the tab right-click menu and the Tabs menu. It groups a window’s tabs by site each time you choose it.",
+    .detail = @"Adds Group Tabs by Domain and Group Selected Tabs by Domain to the tab right-click menu and the Tabs menu. One groups the window’s tabs by site, the other only the tabs you have selected.",
     .symbol = @"rectangle.3.group.fill",
     .tint = @"systemPinkColor",
     .section = @"Tabs",
